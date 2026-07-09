@@ -1,0 +1,54 @@
+flowchart TD
+
+    subgraph RUN["Nightly: dbt build --select dim_entity__history+"]
+        A["1. on-run-start<br/>scd2_bootstrap_audit()<br/>ensure approval table exists"]
+        B["2. pre-hook: scd2_purge_unapproved()<br/>DELETE never-approved batches<br/>(no-op on happy path)"]
+        C{"3. scd2_resolve_attributes()<br/>staging columns vs history columns<br/>(union, via start_exclude + metadata)"}
+        C1["new column:<br/>ALTER TABLE ADD col NULL<br/>(additive, metadata-only)"]
+        C2["departed column:<br/>project CAST(NULL AS stored type)<br/>column + all history retained"]
+        C3["type mismatch:<br/>hard compile error<br/>CTAS rebuild + RENAME swap"]:::fail
+        D["4. append INSERT of genuine changes only<br/>_prev_hash vs attribute_hash<br/>rows tagged _batch_id = invocation_id"]
+        E["5. tests against candidate view<br/>grain (unique SK) / single current row /<br/>reconciliation to latest extract / volume guard"]
+        F{"6. on-run-end: scd2_approve_batches()<br/>model succeeded AND no error-severity<br/>gating test failed?"}
+        G["APPROVE<br/>INSERT batch_id into<br/>audit.scd2_approved_batches"]:::pass
+        H["NO APPROVAL<br/>dim_entity unchanged (stale, not wrong)<br/>dbt exits non-zero, pipeline alerts"]:::fail
+    end
+
+    subgraph WH["Warehouse objects"]
+        STG[("stg_entity<br/>entity_id, _landing_extract_date,<br/>attribute_hash, attributes...")]
+        HIST[("dim_entity__history<br/>insert-only table<br/>HASH(entity_id), CCI")]
+        APPR[("audit.scd2_approved_batches<br/>model_name, batch_id, approved_at")]
+        CAND["dim_entity__candidate (view)<br/>LEAD() over ALL rows:<br/>approved + pending batch"]
+        PUB["dim_entity__published (view)<br/>EXISTS filter on approved batches<br/>applied BEFORE LEAD() windowing"]
+        TBL[("dim_entity (table)<br/>CTAS + RENAME swap<br/>HASH(entity_id), CCI<br/>valid_to / is_current stored")]
+        CONS(["Consumers / marts / BI"])
+    end
+
+    A --> B --> C
+    C -->|"new column"| C1 --> D
+    C -->|"departed column"| C2 --> D
+    C -->|"no drift"| D
+    C -->|"type change"| C3
+    D --> E --> F
+    F -->|"yes"| G
+    F -->|"no"| H
+
+    STG --> D
+    B -. "physically removes<br/>unapproved rows" .-> HIST
+    D --> HIST
+    HIST --> CAND
+    CAND --> E
+    G --> APPR
+    HIST --> PUB
+    APPR -->|"semi-join"| PUB
+    G -->|"scd2_refresh_published()<br/>CTAS __new, then swap"| TBL
+    PUB -->|"SELECT * source<br/>for each refresh"| TBL
+    TBL --> CONS
+
+    RB["Manual rollback / restore:<br/>scd2_rollback() / scd2_restore_last_rollback()<br/>edit approval rows, then refresh table"]
+    RB -.-> APPR
+    RB -. "refresh" .-> TBL
+    H -. "failed rows stay for forensics<br/>until next run's purge" .-> HIST
+
+    classDef pass fill:#d4edda,stroke:#2e7d32,color:#1b5e20
+    classDef fail fill:#fdecea,stroke:#c62828,color:#b71c1c
