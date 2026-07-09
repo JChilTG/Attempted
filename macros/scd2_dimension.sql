@@ -218,6 +218,7 @@
     on_schema_change='ignore',
     dist='HASH(' ~ cfg.dist_col ~ ')',
     index='CLUSTERED COLUMNSTORE INDEX',
+    unique_key='dim_entity_sk',
     pre_hook="{{ scd2_purge_unapproved(this) }}",
     tags=['scd2_history'],
     meta={'scd2_model': marker}

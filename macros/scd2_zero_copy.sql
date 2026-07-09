@@ -155,7 +155,7 @@
                 {% else %}
                     {% set sql %}
                         INSERT INTO audit.scd2_approved_batches (model_name, batch_id, approved_at)
-                        VALUES ('{{ r.node.name }}', '{{ invocation_id }}', SYSUTCDATETIME());
+                        SELECT '{{ r.node.name }}', '{{ invocation_id }}', SYSUTCDATETIME();
                     {% endset %}
                     {% do run_query(sql) %}
                     {% do log('SCD2 gate: batch approved for ' ~ r.node.name, info=True) %}
