@@ -1,0 +1,169 @@
+name: 'attempted'
+version: '1.0.0'
+config-version: 2
+
+profile: 'synapse_prod'
+
+# Directory configuration
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+analysis-paths: ["analysis"]
+seed-paths: ["data"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+  - "logs"
+
+# ============================================================================
+# SCD2 DIMENSIONS CONFIGURATION
+# ============================================================================
+# Define all SCD2 dimensions here. Each entry creates 4 models + 1 test:
+# - <name>__history.sql (insert-only history table)
+# - <name>__candidate.sql (view with valid_to/is_current)
+# - <name>__published.sql (approval-gated view)
+# - <name>__gates.sql (consolidated gate test)
+#
+# The scd2_generate_shims macro reads this config and creates one-line shims
+# in models/scd2/generated/ and tests/generated/
+#
+# Usage: dbt --quiet run-operation scd2_generate_shims | sh
+# ============================================================================
+
+vars:
+  scd2_dimensions:
+    # Update these with your actual staging table details:
+    # - name: dimension name (will create dim_<name>__history, etc.)
+    # - source: staging table name (e.g., stg_entra_membership)
+    # - natural_key: column(s) that uniquely identify the entity
+    # - change_date_column: DATE column with extract date
+    # - hash_column: MD5 varchar column with row hash
+
+    - name: dim_entra_membership
+      source: stg_entra_membership           # UPDATE: your staging table name
+      natural_key: entra_id                  # UPDATE: your natural key column(s)
+      change_date_column: extract_date       # UPDATE: your DATE change_date column
+      hash_column: attribute_hash            # UPDATE: your MD5 hash column
+      surrogate_key: dim_entra_membership_sk # optional; default: <name>_sk
+      dist_column: entra_id                  # optional; default: first natural_key
+      presentation_exclude:                  # optional; hide from published view
+        - attribute_hash
+        - _batch_id
+        - _loaded_at
+
+# ============================================================================
+# MODEL CONFIGURATION
+# ============================================================================
+
+models:
+  attempted:
+    # Staging layer (incoming data)
+    staging:
+      +materialized: view
+      +schema: staging
+      +tags: ["staging"]
+
+    # SCD2 mart layer
+    scd2:
+      +schema: mart
+      +persist_docs:
+        relation: true
+        columns: true
+      +tags: ["scd2"]
+
+      # Generated shims (auto-created by scd2_generate_shims)
+      generated:
+        +tags: ["scd2", "generated"]
+        +schema: mart
+
+tests:
+  attempted:
+    # Generated gate tests (auto-created by scd2_generate_shims)
+    generated:
+      +schema: audit
+      +tags: ["scd2", "scd2_gate", "generated"]
+
+# ============================================================================
+# HOOKS: Approval gating and publication
+# ============================================================================
+# These hooks wire up the batch approval machinery:
+#
+# on-run-start:
+#   1. scd2_generate_shims() - refresh generated shims from vars
+#   2. scd2_bootstrap_audit() - ensure approval tables exist
+#
+# on-run-end:
+#   1. scd2_approve_batches() - approve successful batches (gate check)
+#                             - refresh published tables via CTAS+RENAME
+#
+# IMPORTANT: Use 'dbt build' (not 'dbt run') so gate tests execute
+# ============================================================================
+
+on-run-start:
+  # Ensure all generated shims match current vars.scd2_dimensions
+  - "{{ scd2_generate_shims() }}"
+  # Ensure approval tables exist
+  - "{{ scd2_bootstrap_audit() }}"
+  # Ensure operations schema and artifact tables exist
+  - "{{ dbt_bootstrap_artifacts_schema() }}"
+
+on-run-end:
+  # Approve batches that passed all gate tests, refresh published tables
+  - "{{ scd2_approve_batches(results) }}"
+  # Capture run metadata into warehouse for audit/lineage
+  - "{{ dbt_artifacts_to_warehouse(results) }}"
+
+# ============================================================================
+# SEEDS (optional static reference data)
+# ============================================================================
+
+seeds:
+  attempted:
+    +tags: ["reference"]
+
+# ============================================================================
+# QUOTING (required for Synapse reserved words)
+# ============================================================================
+
+quoting:
+  identifier: false
+  schema: false
+
+# ============================================================================
+# USAGE GUIDE
+# ============================================================================
+#
+# 1. SETUP (first time):
+#    a. Update vars.scd2_dimensions with your dimension details
+#    b. Create staging model stg_entra_membership with columns:
+#       - natural key (entra_id in example above)
+#       - extract_date (DATE type)
+#       - attribute_hash (MD5 varchar, non-NULL)
+#       - all other SCD2 attribute columns
+#    c. Run: dbt --quiet run-operation scd2_generate_shims | sh
+#    d. Commit the generated shim files
+#    e. Run: dbt build --select scd2_*
+#
+# 2. ADD NEW DIMENSION:
+#    a. Add entry to vars.scd2_dimensions
+#    b. Create corresponding staging model (stg_<name>)
+#    c. Run: dbt --quiet run-operation scd2_generate_shims | sh
+#    d. Commit changes
+#
+# 3. RUN NIGHTLY LOAD:
+#    a. Use 'dbt build' (not 'dbt run'):
+#       dbt build --select scd2_*
+#    b. This runs models + tests
+#    c. Approval gate blocks publication if tests fail
+#    d. CTAS+RENAME swap publishes only approved data
+#
+# 4. DEBUG FAILURES:
+#    a. Check gate test results in audit.scd2_gate_test__* table
+#    b. Review dbt test output for which check(s) failed
+#    c. Fix staging data or dimension config
+#    d. Re-run 'dbt build'
+#
+# ============================================================================
