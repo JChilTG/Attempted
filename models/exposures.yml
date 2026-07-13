@@ -1,0 +1,59 @@
+version: 2
+
+# ============================================================================
+# EXPOSURES
+# ============================================================================
+# An exposure documents a downstream consumer of this project's models - a
+# dashboard, application, ML pipeline, or reverse-ETL sync - and wires it
+# into the dbt lineage graph. Once defined you can:
+#
+#   dbt build   --select +exposure:membership_governance_dashboard   # everything it depends on
+#   dbt test    --select +exposure:membership_governance_dashboard   # its upstream tests
+#   dbt source freshness && dbt build --select +exposure:*            # refresh all exposed models
+#
+# and the exposure shows up in `dbt docs` as a first-class node with its own
+# lineage, owner, and description.
+#
+# LINEAGE NOTE: ref() below points at the *published* model nodes
+# (dim_..__published / fact_..__published), not the physical consumption
+# tables (dim_entra_membership / fact_inventory_snapshot). That is correct:
+# the consumption tables are refreshed FROM those published views by the
+# on-run-end CTAS+RENAME, so the published model is the true dbt-graph
+# anchor. BI tools still physically query the consumption table.
+#
+# These refs resolve once the corresponding shims have been generated:
+#   dbt --quiet run-operation scd2_generate_shims | sh
+#   dbt --quiet run-operation fact_snapshot_generate_shims | sh
+# ============================================================================
+
+exposures:
+  - name: membership_governance_dashboard
+    label: "Membership Governance Dashboard"
+    type: dashboard
+    maturity: high
+    url: https://your-bi-tool.example.com/dashboards/membership-governance
+
+    description: >
+      Power BI dashboard used by the IT Governance team to review Entra
+      (Azure AD) group membership over time and reconcile daily inventory
+      snapshots against approved baselines. Reads the approval-gated
+      consumption tables only, so it never sees pending/un-approved batches.
+
+    depends_on:
+      # SCD2 dimension - approval-gated published view (consumption table:
+      # dim_entra_membership). Gives the dashboard point-in-time membership
+      # via valid_from / valid_to / is_current.
+      - ref('dim_entra_membership__published')
+
+      # Periodic snapshot fact - approval-gated published view (consumption
+      # table: fact_inventory_snapshot). Daily row per (warehouse, sku).
+      - ref('fact_inventory_snapshot__published')
+
+    owner:
+      name: Data Platform Team
+      email: data-platform@your-org.example.com
+
+    meta:
+      team: governance
+      refresh_schedule: "daily 06:00 UTC"
+      contains_pii: true

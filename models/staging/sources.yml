@@ -1,0 +1,99 @@
+version: 2
+
+sources:
+  - name: ga4_bigquery_export
+    description: Raw GA4 events exported from BigQuery to Synapse
+    database: "{{ var('synapse_database', 'your_database') }}"
+    schema: raw_ga4
+    tables:
+      - name: events
+        description: All GA4 user events with nested properties
+        freshness:
+          warn_after: { hours: 24 }
+          error_after: { hours: 48 }
+        loaded_at_field: event_date
+        columns:
+          - name: event_date
+            description: Date of event (YYYY-MM-DD)
+            data_type: date
+          - name: event_timestamp
+            description: Event timestamp in microseconds since Unix epoch
+            data_type: bigint
+          - name: event_name
+            description: GA4 event name (page_view, purchase, etc.)
+            data_type: varchar(200)
+          - name: user_id
+            description: User ID (if set; otherwise null)
+            data_type: varchar(200)
+          - name: user_pseudo_id
+            description: Google Analytics pseudonymous user ID
+            data_type: varchar(200)
+          - name: session_id
+            description: Session ID
+            data_type: varchar(200)
+          - name: platform
+            description: Platform (WEB, APP)
+            data_type: varchar(50)
+          - name: device_category
+            description: Device category (mobile, tablet, desktop)
+            data_type: varchar(50)
+          - name: device_os
+            description: Operating system
+            data_type: varchar(100)
+          - name: device_os_version
+            description: OS version
+            data_type: varchar(100)
+          - name: device_language
+            description: Device language
+            data_type: varchar(50)
+          - name: device_model
+            description: Device model
+            data_type: varchar(200)
+          - name: device_brand
+            description: Device brand
+            data_type: varchar(100)
+          - name: geo_continent
+            description: Continent code
+            data_type: varchar(50)
+          - name: geo_country
+            description: Country code (ISO 3166-1 alpha-2)
+            data_type: varchar(50)
+          - name: geo_region
+            description: Region code
+            data_type: varchar(100)
+          - name: geo_city
+            description: City name
+            data_type: varchar(100)
+          - name: traffic_source_name
+            description: Traffic source name (direct, google, etc.)
+            data_type: varchar(200)
+          - name: traffic_source_medium
+            description: Traffic medium (organic, cpc, referral, etc.)
+            data_type: varchar(100)
+          - name: traffic_source_source
+            description: Traffic source (google, facebook, etc.)
+            data_type: varchar(100)
+          - name: event_params
+            description: "Array of event parameters as JSON: [{key: string, value: {string_value, int_value, double_value, float_value}}]"
+            data_type: varchar(4000)
+          - name: user_properties
+            description: "Array of user properties as JSON: [{key: string, value: {string_value, int_value, ...}}]"
+            data_type: varchar(4000)
+          - name: is_session_start
+            description: Flag indicating if this is the first event of a session
+            data_type: bit
+          - name: engagement_time_msec
+            description: Engagement time in milliseconds
+            data_type: bigint
+          - name: stream_id
+            description: Google Analytics data stream ID
+            data_type: varchar(50)
+          - name: privacy_info_analytics_storage
+            description: Indicates if analytics storage is enabled
+            data_type: varchar(50)
+          - name: privacy_info_ads_storage
+            description: Indicates if ads storage is enabled
+            data_type: varchar(50)
+          - name: privacy_info_uses_transient_token
+            description: Indicates if transient token is used
+            data_type: varchar(50)

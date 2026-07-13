@@ -1,0 +1,55 @@
+version: 2
+
+# ============================================================================
+# PLACEHOLDER SOURCES for the country conformance example.
+# UPDATE these names/schemas to match your real canonical table and the FID /
+# SID sources, or delete this file and point the conformed models at your
+# existing source()/ref() nodes.
+# ============================================================================
+
+sources:
+  # Canonical country table (source of truth): ISO alpha-2 + country name.
+  - name: reference
+    description: Canonical reference data.
+    schema: reference
+    tables:
+      - name: country
+        description: Canonical country list; ISO alpha-2 code is the primary key.
+        columns:
+          - name: country_code
+            description: ISO 3166-1 alpha-2 code (primary key).
+            data_type: varchar(2)
+            tests:
+              - not_null
+              - unique
+          - name: country_name
+            description: Canonical country name (e.g. "United States of America").
+            data_type: nvarchar(200)
+            tests:
+              # name matching requires this to be unique or source rows multiply
+              - not_null
+              - unique
+
+  # FID: carries an ISO alpha-2 country_code.
+  - name: fid
+    description: FID source system.
+    schema: fid
+    tables:
+      - name: transactions
+        description: FID records keyed to countries by ISO alpha-2 code.
+        columns:
+          - name: country_code
+            description: ISO alpha-2 (may include non-ISO values like "UK"/"EL" - see overrides).
+            data_type: varchar(2)
+
+  # SID: carries only a country name, which can differ from canonical.
+  - name: sid
+    description: SID source system.
+    schema: sid
+    tables:
+      - name: records
+        description: SID records keyed to countries by name only.
+        columns:
+          - name: country_name
+            description: Free-form country name; conform via name match + overrides.
+            data_type: nvarchar(200)

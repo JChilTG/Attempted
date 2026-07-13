@@ -1,0 +1,7 @@
+source_system,match_key,source_value,canonical_country_code,note
+SID,name,United States,US,SID exports the short legal name; canonical is "United States of America"
+SID,name,Great Britain,GB,SID uses Great Britain for the United Kingdom
+SID,name,South Korea,KR,common name vs canonical "Korea, Republic of"
+SID,name,Russia,RU,common name vs canonical "Russian Federation"
+FID,code,UK,GB,FID emits non-ISO "UK"; ISO alpha-2 for the United Kingdom is GB
+FID,code,EL,GR,FID emits EU/Eurostat "EL" for Greece; ISO alpha-2 is GR

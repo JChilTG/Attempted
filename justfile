@@ -82,6 +82,51 @@ scd2-test:
     dbt test --select tag:scd2_gate
 
 # ============================================================================
+# PERIODIC SNAPSHOT FACT WORKFLOWS
+# ============================================================================
+
+# Generate fact snapshot shim files (models + tests) from vars.fact_snapshots
+# Outputs shell commands - pipe to sh to execute
+fact-generate:
+    dbt --quiet run-operation fact_snapshot_generate_shims | sh
+
+# Show what would be generated without executing
+fact-preview:
+    dbt --quiet run-operation fact_snapshot_generate_shims
+
+# Build all snapshot facts with approval gating (recommended nightly workflow)
+fact-build:
+    dbt build --select tag:fact_snapshot
+
+# Run only fact snapshot models (skip tests)
+fact-run:
+    dbt run --select tag:fact_snapshot
+
+# Test only fact snapshot gate tests
+fact-test:
+    dbt test --select tag:fact_snapshot_gate
+
+# Preview a fact rollback to a snapshot date (DRY RUN - reports only)
+# usage: just fact-rollback-preview fact_inventory_snapshot__history 2026-07-01
+fact-rollback-preview MODEL DATE:
+    dbt run-operation fact_snapshot_rollback --args '{"model_name": "{{MODEL}}", "to_datetime": "{{DATE}}"}'
+
+# Execute a fact rollback to a snapshot date (logical only; reversible until next run)
+# usage: just fact-rollback fact_inventory_snapshot__history 2026-07-01
+fact-rollback MODEL DATE:
+    dbt run-operation fact_snapshot_rollback --args '{"model_name": "{{MODEL}}", "to_datetime": "{{DATE}}", "dry_run": false}'
+
+# Execute a fact rollback AND physically purge un-approved rows (IRREVERSIBLE)
+# usage: just fact-rollback-purge fact_inventory_snapshot__history 2026-07-01
+fact-rollback-purge MODEL DATE:
+    dbt run-operation fact_snapshot_rollback --args '{"model_name": "{{MODEL}}", "to_datetime": "{{DATE}}", "dry_run": false, "purge": true}'
+
+# Reverse the most recent fact rollback (re-approve its batches)
+# usage: just fact-restore fact_inventory_snapshot__history
+fact-restore MODEL:
+    dbt run-operation fact_snapshot_restore_last_rollback --args '{"model_name": "{{MODEL}}"}'
+
+# ============================================================================
 # DOCUMENTATION & LINEAGE
 # ============================================================================
 
@@ -203,6 +248,8 @@ daily:
     @echo "✓ Project parsed"
     just scd2-build
     @echo "✓ SCD2 dimensions built and tested"
+    just fact-build
+    @echo "✓ Snapshot facts built and tested"
     just docs-gen
     @echo "✓ Documentation generated"
     @echo "✨ Daily workflow complete!"

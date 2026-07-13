@@ -55,6 +55,36 @@ vars:
         - _loaded_at
 
 # ============================================================================
+# PERIODIC SNAPSHOT FACTS CONFIGURATION
+# ============================================================================
+# Sibling to scd2_dimensions, for facts that snapshot a measure per entity
+# every period (e.g. daily inventory levels, account balances). Unlike an
+# SCD2 dimension, EVERY row is appended each period - not just changed ones -
+# so the grain is (natural_key, snapshot_date) rather than a valid_from/
+# valid_to interval. Each entry creates 2 models + 1 test:
+# - <name>__history.sql (insert-only, one row per key per snapshot_date)
+# - <name>__published.sql (approval-gated view)
+# - <name>__gates.sql (grain / completeness / volume gate test)
+#
+# The fact_snapshot_generate_shims macro reads this config and creates
+# one-line shims in models/fact/generated/ and tests/generated/
+#
+# Usage: dbt --quiet run-operation fact_snapshot_generate_shims | sh
+# ============================================================================
+
+  fact_snapshots: []
+    # Example:
+    # - name: fact_inventory_snapshot
+    #   source: stg_inventory                        # staging table name
+    #   natural_key: [warehouse_id, sku_id]           # column(s) that uniquely identify the entity
+    #   snapshot_date_column: snapshot_date           # optional; default: snapshot_date
+    #   surrogate_key: fact_inventory_snapshot_sk     # optional; default: <name>_sk
+    #   dist_column: warehouse_id                     # optional; default: first natural_key
+    #   presentation_exclude:                         # optional; hide from published view
+    #     - _batch_id
+    #     - _loaded_at
+
+# ============================================================================
 # MODEL CONFIGURATION
 # ============================================================================
 
@@ -79,25 +109,45 @@ models:
         +tags: ["scd2", "generated"]
         +schema: mart
 
+    # Periodic snapshot fact layer
+    fact:
+      +schema: mart
+      +persist_docs:
+        relation: true
+        columns: true
+      +tags: ["fact_snapshot"]
+
+      # Generated shims (auto-created by fact_snapshot_generate_shims)
+      generated:
+        +tags: ["fact_snapshot", "generated"]
+        +schema: mart
+
 tests:
   attempted:
-    # Generated gate tests (auto-created by scd2_generate_shims)
+    # Generated gate tests (auto-created by scd2_generate_shims and
+    # fact_snapshot_generate_shims). Not tagged scd2/fact_snapshot here -
+    # each generator macro's config() already stamps the specific
+    # scd2_gate / fact_snapshot_gate tag on its own test.
     generated:
       +schema: audit
-      +tags: ["scd2", "scd2_gate", "generated"]
+      +tags: ["generated"]
 
 # ============================================================================
 # HOOKS: Approval gating and publication
 # ============================================================================
-# These hooks wire up the batch approval machinery:
+# These hooks wire up the batch approval machinery for both the SCD2
+# dimension pattern and the periodic snapshot fact pattern:
 #
 # on-run-start:
-#   1. scd2_generate_shims() - refresh generated shims from vars
-#   2. scd2_bootstrap_audit() - ensure approval tables exist
+#   1. scd2_generate_shims() - refresh SCD2 generated shims from vars
+#   2. scd2_bootstrap_audit() - ensure SCD2 approval table exists
+#   3. fact_snapshot_generate_shims() - refresh fact generated shims from vars
+#   4. fact_snapshot_bootstrap_audit() - ensure fact approval table exists
 #
 # on-run-end:
-#   1. scd2_approve_batches() - approve successful batches (gate check)
+#   1. scd2_approve_batches() - approve successful SCD2 batches (gate check)
 #                             - refresh published tables via CTAS+RENAME
+#   2. fact_snapshot_approve_batches() - same, for periodic snapshot facts
 #
 # IMPORTANT: Use 'dbt build' (not 'dbt run') so gate tests execute
 # ============================================================================
@@ -107,12 +157,17 @@ on-run-start:
   - "{{ scd2_generate_shims() }}"
   # Ensure approval tables exist
   - "{{ scd2_bootstrap_audit() }}"
+  # Ensure all generated shims match current vars.fact_snapshots
+  - "{{ fact_snapshot_generate_shims() }}"
+  # Ensure approval tables exist
+  - "{{ fact_snapshot_bootstrap_audit() }}"
   # Ensure operations schema and artifact tables exist
   - "{{ dbt_bootstrap_artifacts_schema() }}"
 
 on-run-end:
   # Approve batches that passed all gate tests, refresh published tables
   - "{{ scd2_approve_batches(results) }}"
+  - "{{ fact_snapshot_approve_batches(results) }}"
   # Capture run metadata into warehouse for audit/lineage
   - "{{ dbt_artifacts_to_warehouse(results) }}"
 
@@ -164,6 +219,40 @@ quoting:
 #    a. Check gate test results in audit.scd2_gate_test__* table
 #    b. Review dbt test output for which check(s) failed
 #    c. Fix staging data or dimension config
+#    d. Re-run 'dbt build'
+#
+# ============================================================================
+# PERIODIC SNAPSHOT FACTS - USAGE GUIDE
+# ============================================================================
+#
+# 1. SETUP (first time):
+#    a. Add an entry to vars.fact_snapshots (see example above)
+#    b. Create staging model (e.g. stg_inventory) with columns:
+#       - natural key(s) (warehouse_id, sku_id in the example)
+#       - snapshot_date (DATE type; one full extract per period)
+#       - all measure/attribute columns to snapshot
+#    c. Run: dbt --quiet run-operation fact_snapshot_generate_shims | sh
+#    d. Commit the generated shim files
+#    e. Run: dbt build --select tag:fact_snapshot
+#
+# 2. ADD NEW FACT:
+#    a. Add entry to vars.fact_snapshots
+#    b. Create corresponding staging model (stg_<name>)
+#    c. Run: dbt --quiet run-operation fact_snapshot_generate_shims | sh
+#    d. Commit changes
+#
+# 3. RUN NIGHTLY LOAD:
+#    a. Use 'dbt build' (not 'dbt run'):
+#       dbt build --select tag:fact_snapshot
+#    b. This appends the new snapshot_date's rows + runs the gate test
+#    c. Approval gate blocks publication if the gate test fails
+#    d. CTAS+RENAME swap publishes only approved data
+#
+# 4. DEBUG FAILURES:
+#    a. Check gate test failures via `dbt build --select tag:fact_snapshot_gate --store-failures`
+#    b. Review dbt test output for which check(s) failed
+#       (grain violation / null key / completeness vs latest extract / volume guard)
+#    c. Fix staging data or fact config
 #    d. Re-run 'dbt build'
 #
 # ============================================================================

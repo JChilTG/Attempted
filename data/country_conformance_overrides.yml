@@ -1,0 +1,53 @@
+version: 2
+
+seeds:
+  - name: country_conformance_overrides
+    description: >
+      Manual, version-controlled overrides for country conformance. Each row
+      forces one source value to a canonical ISO alpha-2 code, taking
+      precedence over automatic matching in the country_conform() macro. This
+      is the file you hand-edit when a source's country cannot be matched
+      automatically (e.g. SID's "United States" -> canonical "United States of
+      America", which is code US). Add a row, re-run `dbt seed`, rebuild.
+
+      Grain: one row per (source_system, match_key, source_value). Keep it
+      unique on that combination - duplicates would multiply source rows on
+      the override join (enforced by the test below).
+    tests:
+      # override grain: a source value maps to at most one canonical code
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - source_system
+            - match_key
+            - source_value
+    config:
+      # Explicit types matter here: canonical_country_code holds values like
+      # "NA" (Namibia) that a loose CSV loader can mistake for NULL, and codes
+      # must stay exactly 2 chars, not be numeric-coerced.
+      column_types:
+        source_system: varchar(20)
+        match_key: varchar(10)
+        source_value: nvarchar(200)
+        canonical_country_code: varchar(2)
+        note: nvarchar(400)
+    columns:
+      - name: source_system
+        description: Source identifier this override applies to (e.g. FID, SID).
+        tests:
+          - not_null
+      - name: match_key
+        description: >
+          Which conformance mode the override targets - "code" (source joins
+          canonical on ISO alpha-2) or "name" (source joins on country name).
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['code', 'name']
+      - name: source_value
+        description: The raw source value (a code or a name) to remap.
+        tests:
+          - not_null
+      - name: canonical_country_code
+        description: Target canonical ISO alpha-2 code the source value maps to.
+        tests:
+          - not_null
