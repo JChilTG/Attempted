@@ -106,8 +106,10 @@
 {% endmacro %}
 
 
-{#- History, candidate, and gate models must use the default dbt object name
-    (no alias). Approval and purge key off model_name / relation.identifier. -#}
+{#- History, candidate, published, and gate models must use the default dbt
+    object name (no alias). Approval and purge key off model_name /
+    relation.identifier. The consumption TABLE (marker name) is built
+    separately by scd2_refresh_published from the *__published view. -#}
 {% macro scd2_assert_alias_forbidden() %}
     {%- set configured = config.get('alias') -%}
     {%- if configured is not none and configured | trim != '' and configured != model.name -%}
@@ -115,19 +117,6 @@
             "scd2: '" ~ model.name ~ "' must not set a dbt alias (found alias='" ~ configured ~
             "'). Approval, purge, and audit tables key off the model name. Remove alias " ~
             "from dbt_project.yml for this model.") }}
-    {%- endif -%}
-{% endmacro %}
-
-
-{#- The published (consumption) view must alias to the dimension marker
-    (dim_<name>), matching the consumption table refreshed by CTAS. -#}
-{% macro scd2_assert_published_alias(marker) %}
-    {%- set configured = config.get('alias') -%}
-    {%- if configured != marker -%}
-        {{ exceptions.raise_compiler_error(
-            "scd2: published model '" ~ model.name ~ "' must have alias='" ~ marker ~
-            "' (the consumption name). Found alias='" ~ configured ~
-            "'. Remove conflicting alias config from dbt_project.yml.") }}
     {%- endif -%}
 {% endmacro %}
 
@@ -383,20 +372,12 @@ from {{ ref(cfg.history_model) }} h
 #}
 {% macro scd2_published(marker) %}
 {%- set cfg = scd2_dimension_config(marker) -%}
-{%- set yaml_alias = config.get('alias') -%}
-{%- if yaml_alias is not none and yaml_alias | trim != '' and yaml_alias != marker -%}
-    {{ exceptions.raise_compiler_error(
-        "scd2: published model '" ~ model.name ~ "' cannot use alias='" ~ yaml_alias ~
-        "'. It must alias to the consumption name '" ~ marker ~ "'.") }}
-{%- endif -%}
+{{ scd2_assert_alias_forbidden() }}
 {{ config(
     materialized='view',
-    alias=marker,
-    pre_hook="{{ scd2_prepare_published_view(this) }}",
     tags=['scd2_published'],
     meta={'scd2_model': marker}
 ) }}
-{{ scd2_assert_published_alias(marker) }}
 {%- set part = scd2__key_list(cfg, 'a') %}
 
 with approved as (

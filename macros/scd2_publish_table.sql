@@ -36,16 +36,6 @@
 */
 
 
-{#- Drop the consumption TABLE (and any stale VIEW) so the published model
-    can materialize as a view at alias=<marker> after a prior CTAS refresh. -#}
-{% macro scd2_prepare_published_view(relation) %}
-    IF OBJECT_ID('{{ relation.schema }}.{{ relation.identifier }}', 'U') IS NOT NULL
-        DROP TABLE {{ relation.schema }}.{{ relation.identifier }};
-    IF OBJECT_ID('{{ relation.schema }}.{{ relation.identifier }}', 'V') IS NOT NULL
-        DROP VIEW {{ relation.schema }}.{{ relation.identifier }};
-{% endmacro %}
-
-
 {% macro scd2_raise_refresh_error(message) %}
     {{ scd2_fail_run('scd2_refresh_published: ' ~ message) }}
 {% endmacro %}
@@ -85,7 +75,7 @@
 
     {#- 2. verify __new exists and row counts match the published view -#}
     {%- set exists_new = run_query(
-        "select case when object_id('" ~ new_tbl ~ "', 'U') is not null then 1 else 0 end") -%}
+        "select case when object_id('" ~ new_tbl ~ "', 'U') is not null then 1 else 0 end as object_exists") -%}
     {%- if exists_new.rows[0][0] != 1 -%}
         {%- do return({
             'ok': false,
@@ -116,7 +106,7 @@
 
     {#- 4. verify the swapped-in table exists -#}
     {%- set exists_final = run_query(
-        "select case when object_id('" ~ full ~ "', 'U') is not null then 1 else 0 end") -%}
+        "select case when object_id('" ~ full ~ "', 'U') is not null then 1 else 0 end as object_exists") -%}
     {%- if exists_final.rows[0][0] != 1 -%}
         {%- do return({
             'ok': false,
@@ -124,7 +114,7 @@
         }) -%}
     {%- endif -%}
 
-    {%- set final_cnt = run_query("select count_big(*) from " ~ full) -%}
+    {%- set final_cnt = run_query("select count_big(*) as row_cnt from " ~ full) -%}
     {%- if final_cnt.rows[0][0] != view_cnt -%}
         {%- do return({
             'ok': false,
